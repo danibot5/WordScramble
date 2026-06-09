@@ -28,6 +28,7 @@ partial class IndexForm
     /// </summary>
     private void InitializeComponent()
     {
+        components = new System.ComponentModel.Container();
         labelTitle = new Label();
         labelScrambledCaption = new Label();
         labelScrambledWord = new Label();
@@ -45,6 +46,9 @@ partial class IndexForm
         labelFailedAttempts = new Label();
         textBoxFailedAttempts = new TextBox();
         labelStatus = new Label();
+        labelTimer = new Label();
+        labelTimerCount = new Label();
+        countdownTimer = new System.Windows.Forms.Timer(components);
         SuspendLayout();
         // 
         // labelTitle
@@ -236,12 +240,40 @@ partial class IndexForm
         labelStatus.Text = "Unscramble the word and press Check.";
         labelStatus.TextAlign = ContentAlignment.MiddleCenter;
         // 
+        // labelTimer
+        // 
+        labelTimer.AutoSize = true;
+        labelTimer.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
+        labelTimer.Location = new Point(62, 430);
+        labelTimer.Name = "labelTimer";
+        labelTimer.Size = new Size(54, 23);
+        labelTimer.TabIndex = 17;
+        labelTimer.Text = "Timer";
+        // 
+        // labelTimerCount
+        // 
+        labelTimerCount.AutoSize = true;
+        labelTimerCount.Font = new Font("Segoe UI", 11F, FontStyle.Bold);
+        labelTimerCount.ForeColor = Color.FromArgb(31, 78, 121);
+        labelTimerCount.Location = new Point(152, 430);
+        labelTimerCount.Name = "labelTimerCount";
+        labelTimerCount.Size = new Size(36, 25);
+        labelTimerCount.TabIndex = 18;
+        labelTimerCount.Text = "30s";
+        // 
+        // countdownTimer
+        // 
+        countdownTimer.Interval = 1000;
+        countdownTimer.Tick += CountdownTimerTick;
+        // 
         // IndexForm
         // 
         AutoScaleDimensions = new SizeF(8F, 20F);
         AutoScaleMode = AutoScaleMode.Font;
         BackColor = Color.FromArgb(247, 249, 252);
         ClientSize = new Size(1504, 739);
+        Controls.Add(labelTimerCount);
+        Controls.Add(labelTimer);
         Controls.Add(labelStatus);
         Controls.Add(textBoxFailedAttempts);
         Controls.Add(labelFailedAttempts);
@@ -287,4 +319,7 @@ partial class IndexForm
     private Label labelFailedAttempts;
     private TextBox textBoxFailedAttempts;
     private Label labelStatus;
+    private Label labelTimer;
+    private Label labelTimerCount;
+    private System.Windows.Forms.Timer countdownTimer;
 }

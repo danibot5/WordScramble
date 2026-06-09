@@ -9,7 +9,7 @@ Word Scramble is a C# Windows Forms game where the player tries to unscramble ra
 - Let the player type a guess and check it.
 - Track attempts, failed guesses, solved words, and score.
 - Regenerate a new word after too many failed attempts.
-- Add small extra features: skip, hint, and scoring.
+- Add small extra features: skip, hint, scoring, and a countdown timer.
 
 ## Technologies
 
@@ -26,4 +26,5 @@ Open `WordScramble.slnx` in Visual Studio, press `F5`, and play the game.
 - `Check` verifies the current guess.
 - `Skip` moves to a new word and removes a few points.
 - `Hint` reveals the first and last letter and removes a few points.
+- The timer gives the player 30 seconds for each word.
 - The failed attempts box shows wrong guesses for the current word.

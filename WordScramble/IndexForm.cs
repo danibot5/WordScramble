@@ -4,6 +4,7 @@ public partial class IndexForm : Form
 {
     private const string WordsTextFile = "words.txt";
     private const int MaxAttemptsPerWord = 10;
+    private const int RoundSeconds = 30;
 
     private readonly List<string> failedAttempts = [];
     private readonly List<string> wordList = [];
@@ -12,6 +13,7 @@ public partial class IndexForm : Form
     private int attempts;
     private int guessedWords;
     private int score;
+    private int secondsLeft;
     private bool hintUsed;
     private string currentWord = string.Empty;
 
@@ -63,6 +65,8 @@ public partial class IndexForm : Form
             currentWord = string.Empty;
             labelScrambledWord.Text = "No words left";
             labelStatus.Text = "Game complete! You guessed every available word.";
+            countdownTimer.Stop();
+            labelTimerCount.Text = "0s";
             textBoxInput.Enabled = false;
             buttonCheck.Enabled = false;
             buttonSkip.Enabled = false;
@@ -78,9 +82,12 @@ public partial class IndexForm : Form
     private void ResetGameInfo()
     {
         attempts = 0;
+        secondsLeft = RoundSeconds;
         hintUsed = false;
         failedAttempts.Clear();
         labelScrambledWord.Text = ScrambleWord(currentWord);
+        UpdateTimerLabel();
+        countdownTimer.Start();
     }
 
     private string ScrambleWord(string word)
@@ -132,8 +139,9 @@ public partial class IndexForm : Form
     private void SuccessfulAttempt()
     {
         string guessedWord = currentWord;
-        int earnedPoints = Math.Max(1, MaxAttemptsPerWord - attempts) + guessedWord.Length;
+        int earnedPoints = Math.Max(1, MaxAttemptsPerWord - attempts) + guessedWord.Length + secondsLeft / 5;
 
+        countdownTimer.Stop();
         guessedWords++;
         score += earnedPoints;
         wordList.Remove(guessedWord);
@@ -143,6 +151,7 @@ public partial class IndexForm : Form
             currentWord = string.Empty;
             labelScrambledWord.Text = "Finished";
             labelStatus.Text = $"Correct! The last word was '{guessedWord}'. Final score: {score}.";
+            labelTimerCount.Text = "0s";
             textBoxInput.Enabled = false;
             buttonCheck.Enabled = false;
             buttonSkip.Enabled = false;
@@ -163,6 +172,7 @@ public partial class IndexForm : Form
         if (attempts >= MaxAttemptsPerWord)
         {
             string missedWord = currentWord;
+            countdownTimer.Stop();
             wordList.Remove(missedWord);
             GenerateNewWord();
             labelStatus.Text = $"New word generated. The missed word was '{missedWord}'.";
@@ -177,6 +187,7 @@ public partial class IndexForm : Form
         labelAttemptsCount.Text = attempts.ToString();
         labelGuessedCount.Text = guessedWords.ToString();
         labelScoreCount.Text = score.ToString();
+        UpdateTimerLabel();
         textBoxFailedAttempts.Text = string.Join(Environment.NewLine, failedAttempts);
         textBoxInput.Clear();
         textBoxInput.Focus();
@@ -190,6 +201,7 @@ public partial class IndexForm : Form
         }
 
         string skippedWord = currentWord;
+        countdownTimer.Stop();
         score = Math.Max(0, score - 2);
         wordList.Remove(skippedWord);
         GenerateNewWord();
@@ -233,5 +245,42 @@ public partial class IndexForm : Form
             ButtonCheckClick(sender, e);
             e.SuppressKeyPress = true;
         }
+    }
+
+    private void CountdownTimerTick(object sender, EventArgs e)
+    {
+        if (string.IsNullOrEmpty(currentWord))
+        {
+            countdownTimer.Stop();
+            return;
+        }
+
+        secondsLeft--;
+        UpdateTimerLabel();
+
+        if (secondsLeft <= 0)
+        {
+            TimeExpired();
+        }
+    }
+
+    private void TimeExpired()
+    {
+        countdownTimer.Stop();
+
+        string expiredWord = currentWord;
+        failedAttempts.Add("time expired");
+        score = Math.Max(0, score - 2);
+        wordList.Remove(expiredWord);
+
+        GenerateNewWord();
+        labelStatus.Text = $"Time's up! The word was '{expiredWord}'.";
+        UpdateLabels();
+    }
+
+    private void UpdateTimerLabel()
+    {
+        labelTimerCount.Text = $"{secondsLeft}s";
+        labelTimerCount.ForeColor = secondsLeft <= 5 ? Color.Firebrick : Color.FromArgb(31, 78, 121);
     }
 }

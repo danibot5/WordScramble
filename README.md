@@ -19,7 +19,7 @@ Word Scramble is a C# Windows Forms game where the player tries to unscramble ra
 
 ## How to Run
 
-Open `WordScramble.slnx` in Visual Studio, press `F5`, and play the game.
+Open `WordScramble.sln` in Visual Studio, press `F5`, and play the game.
 
 ## Controls
 

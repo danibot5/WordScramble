@@ -14,6 +14,7 @@ public partial class IndexForm : Form
     private int guessedWords;
     private int score;
     private int secondsLeft;
+    private int streak;
     private bool hintUsed;
     private string currentWord = string.Empty;
 
@@ -143,7 +144,8 @@ public partial class IndexForm : Form
 
         countdownTimer.Stop();
         guessedWords++;
-        score += earnedPoints;
+        streak++;
+        score += earnedPoints + streak;
         wordList.Remove(guessedWord);
 
         if (wordList.Count == 0)
@@ -160,7 +162,7 @@ public partial class IndexForm : Form
         }
 
         GenerateNewWord();
-        labelStatus.Text = $"Correct! The word was '{guessedWord}'. You earned {earnedPoints} points.";
+        labelStatus.Text = $"Correct! The word was '{guessedWord}'. You earned {earnedPoints + streak} points. Streak: {streak} 🔥";
     }
 
     private void UnsuccessfulAttempt(string input)
@@ -174,6 +176,7 @@ public partial class IndexForm : Form
             string missedWord = currentWord;
             countdownTimer.Stop();
             wordList.Remove(missedWord);
+            streak = 0;
             GenerateNewWord();
             labelStatus.Text = $"New word generated. The missed word was '{missedWord}'.";
             return;
@@ -204,6 +207,7 @@ public partial class IndexForm : Form
         countdownTimer.Stop();
         score = Math.Max(0, score - 2);
         wordList.Remove(skippedWord);
+        streak = 0;
         GenerateNewWord();
         labelStatus.Text = $"Skipped. The word was '{skippedWord}'.";
         UpdateLabels();
@@ -272,7 +276,7 @@ public partial class IndexForm : Form
         failedAttempts.Add("time expired");
         score = Math.Max(0, score - 2);
         wordList.Remove(expiredWord);
-
+        streak = 0;
         GenerateNewWord();
         labelStatus.Text = $"Time's up! The word was '{expiredWord}'.";
         UpdateLabels();

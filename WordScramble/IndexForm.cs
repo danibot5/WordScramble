@@ -4,6 +4,9 @@ public partial class IndexForm : Form
 {
     private const string WordsTextFile = "words.txt";
     private const int MaxAttemptsPerWord = 6;
+    private const int BossRoundFrequency = 5;
+    private const int OverdriveMaximum = 100;
+    private const int OverdriveRounds = 3;
 
     private readonly Dictionary<string, DifficultySettings> difficultySettings = new()
     {
@@ -15,6 +18,7 @@ public partial class IndexForm : Form
     private readonly List<string> allWords = [];
     private readonly List<string> remainingWords = [];
     private readonly List<string> failedAttempts = [];
+    private readonly HashSet<string> achievements = [];
     private readonly HashSet<int> revealedIndexes = [];
     private readonly Random random = new();
 
@@ -26,6 +30,10 @@ public partial class IndexForm : Form
     private int lives;
     private int highScore;
     private int hintsUsedForWord;
+    private int overdriveCharge;
+    private int overdriveRoundsLeft;
+    private bool bossRound;
+    private bool perfectRound;
     private string currentWord = string.Empty;
 
     public IndexForm()
@@ -38,6 +46,7 @@ public partial class IndexForm : Form
         comboBoxDifficulty.SelectedIndex = 1;
         GetAllWords();
         LoadHighScore();
+        LoadAchievements();
         StartNewGame();
     }
 
@@ -62,6 +71,8 @@ public partial class IndexForm : Form
             return Path.Combine(folder, "high-score.txt");
         }
     }
+
+    private string AchievementsFilePath => Path.Combine(Path.GetDirectoryName(HighScoreFilePath)!, "achievements.txt");
 
     private void GetAllWords()
     {
@@ -114,6 +125,9 @@ public partial class IndexForm : Form
         score = 0;
         streak = 0;
         lives = settings.StartingLives;
+        overdriveCharge = 0;
+        overdriveRoundsLeft = 0;
+        bossRound = false;
 
         SetGameControlsEnabled(true);
         labelStatus.Text = $"New {comboBoxDifficulty.Text} game started. Clear as many words as you can.";
@@ -131,6 +145,7 @@ public partial class IndexForm : Form
 
         int randomIndex = random.Next(remainingWords.Count);
         currentWord = remainingWords[randomIndex];
+        bossRound = guessedWords > 0 && guessedWords % BossRoundFrequency == 0;
         ResetRoundInfo();
     }
 
@@ -139,14 +154,19 @@ public partial class IndexForm : Form
         DifficultySettings settings = CurrentDifficulty;
 
         attempts = 0;
-        secondsLeft = settings.SecondsPerRound;
+        secondsLeft = bossRound ? settings.SecondsPerRound + 12 : settings.SecondsPerRound;
         hintsUsedForWord = 0;
+        perfectRound = true;
         failedAttempts.Clear();
         revealedIndexes.Clear();
 
-        progressBarTimer.Maximum = settings.SecondsPerRound;
+        progressBarTimer.Maximum = secondsLeft;
         progressBarTimer.Value = secondsLeft;
         labelScrambledWord.Text = ScrambleWord(currentWord);
+        labelMode.Text = bossRound ? "BOSS ROUND" : overdriveRoundsLeft > 0 ? $"OVERDRIVE x{overdriveRoundsLeft}" : "STANDARD";
+        labelMode.ForeColor = bossRound ? Color.Firebrick : overdriveRoundsLeft > 0 ? Color.FromArgb(130, 65, 210) : Color.FromArgb(90, 90, 96);
+        BuildLetterTiles(labelScrambledWord.Text);
+        ClearLetterEntry();
         UpdateTimerLabel();
         countdownTimer.Start();
     }
@@ -211,7 +231,10 @@ public partial class IndexForm : Form
         guessedWords++;
         streak++;
         score += earnedPoints;
+        ChargeOverdrive(bossRound ? 35 : 22);
         remainingWords.Remove(guessedWord);
+        UnlockProgressAchievements(earnedPoints);
+        ReduceOverdriveRounds();
         UpdateHighScore();
 
         if (remainingWords.Count == 0)
@@ -232,14 +255,27 @@ public partial class IndexForm : Form
         int streakBonus = Math.Min(streak + 1, 10) * 5;
         int wordValue = currentWord.Length * 4;
         int rawPoints = wordValue + timeBonus + attemptBonus + streakBonus;
+        double multiplier = settings.ScoreMultiplier;
 
-        return Math.Max(1, (int)Math.Round(rawPoints * settings.ScoreMultiplier));
+        if (bossRound)
+        {
+            multiplier *= 2;
+        }
+
+        if (overdriveRoundsLeft > 0)
+        {
+            multiplier *= 2;
+        }
+
+        return Math.Max(1, (int)Math.Round(rawPoints * multiplier));
     }
 
     private void UnsuccessfulAttempt(string input)
     {
         attempts++;
         failedAttempts.Add(input);
+        perfectRound = false;
+        ChargeOverdrive(-5);
         score = Math.Max(0, score - 2);
 
         if (attempts >= MaxAttemptsPerWord)
@@ -248,6 +284,7 @@ public partial class IndexForm : Form
             return;
         }
 
+        ClearLetterEntry();
         labelStatus.Text = $"Not it. {MaxAttemptsPerWord - attempts} attempts left for this word.";
     }
 
@@ -257,8 +294,15 @@ public partial class IndexForm : Form
 
         string missedWord = currentWord;
         lives--;
+        if (bossRound)
+        {
+            lives--;
+        }
+
+        lives = Math.Max(0, lives);
         streak = 0;
         remainingWords.Remove(missedWord);
+        UnlockAchievement("Survivor", "Lost a round and kept going.");
         UpdateHighScore();
 
         if (lives <= 0)
@@ -277,8 +321,14 @@ public partial class IndexForm : Form
         currentWord = string.Empty;
         secondsLeft = 0;
         UpdateHighScore();
+        if (won)
+        {
+            UnlockAchievement("Deck Cleaner", "Cleared every available word.");
+        }
+
         SetGameControlsEnabled(false);
         labelScrambledWord.Text = won ? "CLEARED" : "GAME OVER";
+        flowLayoutPanelLetters.Controls.Clear();
         labelStatus.Text = message;
         UpdateLabels();
     }
@@ -292,9 +342,11 @@ public partial class IndexForm : Form
         labelLivesCount.Text = lives.ToString();
         labelHighScoreCount.Text = highScore.ToString();
         labelWordsLeftCount.Text = remainingWords.Count.ToString();
+        labelOverdriveCount.Text = overdriveRoundsLeft > 0 ? $"ACTIVE {overdriveRoundsLeft}" : $"{overdriveCharge}%";
+        progressBarOverdrive.Value = Math.Min(overdriveCharge, OverdriveMaximum);
+        buttonOverdrive.Enabled = textBoxInput.Enabled && overdriveCharge >= OverdriveMaximum && overdriveRoundsLeft == 0;
         UpdateTimerLabel();
         textBoxFailedAttempts.Text = string.Join(Environment.NewLine, failedAttempts);
-        textBoxInput.Clear();
 
         if (textBoxInput.Enabled)
         {
@@ -313,6 +365,8 @@ public partial class IndexForm : Form
         countdownTimer.Stop();
         score = Math.Max(0, score - 8);
         streak = 0;
+        perfectRound = false;
+        ChargeOverdrive(-10);
         remainingWords.Remove(skippedWord);
         UpdateHighScore();
         GenerateNewWord();
@@ -337,10 +391,12 @@ public partial class IndexForm : Form
         int indexToReveal = GetNextHintIndex();
         revealedIndexes.Add(indexToReveal);
         hintsUsedForWord++;
+        perfectRound = false;
 
         int penalty = 5 + hintsUsedForWord * 2;
         score = Math.Max(0, score - penalty);
         streak = 0;
+        ChargeOverdrive(-8);
         labelStatus.Text = $"Hint: {BuildHintPattern()} (-{penalty} points)";
         UpdateLabels();
     }
@@ -390,9 +446,45 @@ public partial class IndexForm : Form
         }
 
         labelScrambledWord.Text = ScrambleWord(currentWord);
+        BuildLetterTiles(labelScrambledWord.Text);
         score = Math.Max(0, score - 1);
+        perfectRound = false;
         labelStatus.Text = "Fresh scramble generated. -1 point.";
         UpdateLabels();
+    }
+
+    private void ButtonOverdriveClick(object sender, EventArgs e)
+    {
+        if (overdriveCharge < OverdriveMaximum || overdriveRoundsLeft > 0)
+        {
+            return;
+        }
+
+        overdriveCharge = 0;
+        overdriveRoundsLeft = OverdriveRounds;
+        UnlockAchievement("Overdrive Online", "Activated Overdrive for the first time.");
+        labelStatus.Text = "OVERDRIVE ONLINE. The next 3 correct words are worth double.";
+        UpdateLabels();
+    }
+
+    private void ButtonClearClick(object sender, EventArgs e)
+    {
+        ClearLetterEntry();
+        textBoxInput.Focus();
+    }
+
+    private void ButtonBackspaceClick(object sender, EventArgs e)
+    {
+        if (textBoxInput.Text.Length == 0)
+        {
+            return;
+        }
+
+        char removedCharacter = textBoxInput.Text[^1];
+        textBoxInput.Text = textBoxInput.Text[..^1];
+        EnableOneLetterTile(removedCharacter);
+        textBoxInput.SelectionStart = textBoxInput.Text.Length;
+        textBoxInput.Focus();
     }
 
     private void ButtonNewGameClick(object sender, EventArgs e)
@@ -429,6 +521,7 @@ public partial class IndexForm : Form
     private void TimeExpired()
     {
         failedAttempts.Add("time expired");
+        perfectRound = false;
         LoseLife($"Time's up. The word was '{currentWord}'.");
         UpdateLabels();
     }
@@ -451,6 +544,9 @@ public partial class IndexForm : Form
         buttonSkip.Enabled = enabled;
         buttonHint.Enabled = enabled;
         buttonReshuffle.Enabled = enabled;
+        buttonClear.Enabled = enabled;
+        buttonBackspace.Enabled = enabled;
+        buttonOverdrive.Enabled = enabled && overdriveCharge >= OverdriveMaximum && overdriveRoundsLeft == 0;
     }
 
     private void LoadHighScore()
@@ -471,6 +567,31 @@ public partial class IndexForm : Form
         }
     }
 
+    private void LoadAchievements()
+    {
+        achievements.Clear();
+        listBoxAchievements.Items.Clear();
+
+        try
+        {
+            if (File.Exists(AchievementsFilePath))
+            {
+                foreach (string achievement in File.ReadAllLines(AchievementsFilePath))
+                {
+                    if (!string.IsNullOrWhiteSpace(achievement) && achievements.Add(achievement))
+                    {
+                        listBoxAchievements.Items.Add(achievement);
+                    }
+                }
+            }
+        }
+        catch
+        {
+            achievements.Clear();
+            listBoxAchievements.Items.Clear();
+        }
+    }
+
     private void UpdateHighScore()
     {
         if (score <= highScore)
@@ -488,6 +609,125 @@ public partial class IndexForm : Form
         catch
         {
             labelStatus.Text = "High score updated, but it could not be saved to disk.";
+        }
+    }
+
+    private void BuildLetterTiles(string scrambledWord)
+    {
+        flowLayoutPanelLetters.Controls.Clear();
+
+        foreach (char letter in scrambledWord)
+        {
+            Button letterButton = new()
+            {
+                AutoSize = false,
+                BackColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 14F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(28, 28, 30),
+                Margin = new Padding(4),
+                Size = new Size(44, 40),
+                Text = letter.ToString().ToUpper()
+            };
+
+            letterButton.FlatAppearance.BorderColor = Color.FromArgb(210, 214, 220);
+            letterButton.Click += LetterButtonClick;
+            flowLayoutPanelLetters.Controls.Add(letterButton);
+        }
+    }
+
+    private void LetterButtonClick(object? sender, EventArgs e)
+    {
+        if (sender is not Button letterButton)
+        {
+            return;
+        }
+
+        textBoxInput.Text += letterButton.Text.ToLower();
+        textBoxInput.SelectionStart = textBoxInput.Text.Length;
+        letterButton.Enabled = false;
+        textBoxInput.Focus();
+    }
+
+    private void EnableOneLetterTile(char letter)
+    {
+        foreach (Control control in flowLayoutPanelLetters.Controls)
+        {
+            if (!control.Enabled && control.Text.Equals(letter.ToString(), StringComparison.OrdinalIgnoreCase))
+            {
+                control.Enabled = true;
+                return;
+            }
+        }
+    }
+
+    private void ClearLetterEntry()
+    {
+        textBoxInput.Clear();
+
+        foreach (Control control in flowLayoutPanelLetters.Controls)
+        {
+            control.Enabled = textBoxInput.Enabled;
+        }
+    }
+
+    private void ChargeOverdrive(int amount)
+    {
+        overdriveCharge = Math.Clamp(overdriveCharge + amount, 0, OverdriveMaximum);
+    }
+
+    private void ReduceOverdriveRounds()
+    {
+        if (overdriveRoundsLeft > 0)
+        {
+            overdriveRoundsLeft--;
+        }
+    }
+
+    private void UnlockProgressAchievements(int earnedPoints)
+    {
+        UnlockAchievement("First Decode", "Solved your first word.");
+
+        if (perfectRound)
+        {
+            UnlockAchievement("Perfect Read", "Solved a word with no mistakes, hints, or reshuffles.");
+        }
+
+        if (streak >= 5)
+        {
+            UnlockAchievement("Five Chain", "Reached a 5-word streak.");
+        }
+
+        if (bossRound)
+        {
+            UnlockAchievement("Boss Breaker", "Beat a boss round.");
+        }
+
+        if (earnedPoints >= 180)
+        {
+            UnlockAchievement("Point Storm", "Scored at least 180 points on one word.");
+        }
+    }
+
+    private void UnlockAchievement(string title, string description)
+    {
+        string achievement = $"{title} - {description}";
+
+        if (!achievements.Add(achievement))
+        {
+            return;
+        }
+
+        listBoxAchievements.Items.Insert(0, achievement);
+        labelStatus.Text = $"Achievement unlocked: {title}.";
+
+        try
+        {
+            File.WriteAllLines(AchievementsFilePath, achievements);
+        }
+        catch
+        {
+            labelStatus.Text = $"Achievement unlocked: {title}. Saving it failed, but it counts in my heart.";
         }
     }
 

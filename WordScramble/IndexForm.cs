@@ -3,11 +3,19 @@ namespace WordScramble;
 public partial class IndexForm : Form
 {
     private const string WordsTextFile = "words.txt";
-    private const int MaxAttemptsPerWord = 10;
-    private const int RoundSeconds = 30;
+    private const int MaxAttemptsPerWord = 6;
 
+    private readonly Dictionary<string, DifficultySettings> difficultySettings = new()
+    {
+        ["Chill"] = new DifficultySettings(45, 5, 1.0),
+        ["Classic"] = new DifficultySettings(30, 4, 1.25),
+        ["Blitz"] = new DifficultySettings(18, 3, 1.75)
+    };
+
+    private readonly List<string> allWords = [];
+    private readonly List<string> remainingWords = [];
     private readonly List<string> failedAttempts = [];
-    private readonly List<string> wordList = [];
+    private readonly HashSet<int> revealedIndexes = [];
     private readonly Random random = new();
 
     private int attempts;
@@ -15,7 +23,9 @@ public partial class IndexForm : Form
     private int score;
     private int secondsLeft;
     private int streak;
-    private bool hintUsed;
+    private int lives;
+    private int highScore;
+    private int hintsUsedForWord;
     private string currentWord = string.Empty;
 
     public IndexForm()
@@ -25,9 +35,32 @@ public partial class IndexForm : Form
 
     private void IndexFormLoad(object sender, EventArgs e)
     {
+        comboBoxDifficulty.SelectedIndex = 1;
         GetAllWords();
-        GenerateNewWord();
-        UpdateLabels();
+        LoadHighScore();
+        StartNewGame();
+    }
+
+    private DifficultySettings CurrentDifficulty
+    {
+        get
+        {
+            string difficultyName = comboBoxDifficulty.SelectedItem?.ToString() ?? "Classic";
+            return difficultySettings[difficultyName];
+        }
+    }
+
+    private string HighScoreFilePath
+    {
+        get
+        {
+            string folder = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "WordScramble");
+
+            Directory.CreateDirectory(folder);
+            return Path.Combine(folder, "high-score.txt");
+        }
     }
 
     private void GetAllWords()
@@ -46,6 +79,8 @@ public partial class IndexForm : Form
             return;
         }
 
+        allWords.Clear();
+
         using StreamReader reader = new(wordsFilePath);
 
         while (!reader.EndOfStream)
@@ -54,38 +89,63 @@ public partial class IndexForm : Form
 
             if (!string.IsNullOrWhiteSpace(word))
             {
-                wordList.Add(word.Trim().ToLower());
+                allWords.Add(word.Trim().ToLower());
             }
         }
     }
 
-    private void GenerateNewWord()
+    private void StartNewGame()
     {
-        if (wordList.Count == 0)
+        countdownTimer.Stop();
+
+        if (allWords.Count == 0)
         {
-            currentWord = string.Empty;
-            labelScrambledWord.Text = "No words left";
-            labelStatus.Text = "Game complete! You guessed every available word.";
-            countdownTimer.Stop();
-            labelTimerCount.Text = "0s";
-            textBoxInput.Enabled = false;
-            buttonCheck.Enabled = false;
-            buttonSkip.Enabled = false;
-            buttonHint.Enabled = false;
+            labelStatus.Text = "No words were loaded. Check words.txt.";
+            SetGameControlsEnabled(false);
             return;
         }
 
-        int randomIndex = random.Next(wordList.Count);
-        currentWord = wordList[randomIndex];
-        ResetGameInfo();
+        DifficultySettings settings = CurrentDifficulty;
+        remainingWords.Clear();
+        remainingWords.AddRange(allWords);
+
+        attempts = 0;
+        guessedWords = 0;
+        score = 0;
+        streak = 0;
+        lives = settings.StartingLives;
+
+        SetGameControlsEnabled(true);
+        labelStatus.Text = $"New {comboBoxDifficulty.Text} game started. Clear as many words as you can.";
+        GenerateNewWord();
+        UpdateLabels();
     }
 
-    private void ResetGameInfo()
+    private void GenerateNewWord()
     {
+        if (remainingWords.Count == 0)
+        {
+            EndGame("You cleared every word in the list. Absolute word wizard behavior.", true);
+            return;
+        }
+
+        int randomIndex = random.Next(remainingWords.Count);
+        currentWord = remainingWords[randomIndex];
+        ResetRoundInfo();
+    }
+
+    private void ResetRoundInfo()
+    {
+        DifficultySettings settings = CurrentDifficulty;
+
         attempts = 0;
-        secondsLeft = RoundSeconds;
-        hintUsed = false;
+        secondsLeft = settings.SecondsPerRound;
+        hintsUsedForWord = 0;
         failedAttempts.Clear();
+        revealedIndexes.Clear();
+
+        progressBarTimer.Maximum = settings.SecondsPerRound;
+        progressBarTimer.Value = secondsLeft;
         labelScrambledWord.Text = ScrambleWord(currentWord);
         UpdateTimerLabel();
         countdownTimer.Start();
@@ -119,6 +179,11 @@ public partial class IndexForm : Form
 
     private void CheckTheWord()
     {
+        if (string.IsNullOrEmpty(currentWord))
+        {
+            return;
+        }
+
         string input = textBoxInput.Text.Trim().ToLower();
 
         if (string.IsNullOrWhiteSpace(input))
@@ -140,49 +205,82 @@ public partial class IndexForm : Form
     private void SuccessfulAttempt()
     {
         string guessedWord = currentWord;
-        int earnedPoints = Math.Max(1, MaxAttemptsPerWord - attempts) + guessedWord.Length + secondsLeft / 5;
+        int earnedPoints = CalculatePoints();
 
         countdownTimer.Stop();
         guessedWords++;
         streak++;
-        score += earnedPoints + streak;
-        wordList.Remove(guessedWord);
+        score += earnedPoints;
+        remainingWords.Remove(guessedWord);
+        UpdateHighScore();
 
-        if (wordList.Count == 0)
+        if (remainingWords.Count == 0)
         {
-            currentWord = string.Empty;
-            labelScrambledWord.Text = "Finished";
-            labelStatus.Text = $"Correct! The last word was '{guessedWord}'. Final score: {score}.";
-            labelTimerCount.Text = "0s";
-            textBoxInput.Enabled = false;
-            buttonCheck.Enabled = false;
-            buttonSkip.Enabled = false;
-            buttonHint.Enabled = false;
+            EndGame($"Final answer locked in: '{guessedWord}'. You cleared the deck.", true);
             return;
         }
 
         GenerateNewWord();
-        labelStatus.Text = $"Correct! The word was '{guessedWord}'. You earned {earnedPoints + streak} points. Streak: {streak} 🔥";
+        labelStatus.Text = $"Correct: '{guessedWord}'. +{earnedPoints} points. Streak: {streak}.";
+    }
+
+    private int CalculatePoints()
+    {
+        DifficultySettings settings = CurrentDifficulty;
+        int timeBonus = secondsLeft;
+        int attemptBonus = Math.Max(0, MaxAttemptsPerWord - attempts) * 3;
+        int streakBonus = Math.Min(streak + 1, 10) * 5;
+        int wordValue = currentWord.Length * 4;
+        int rawPoints = wordValue + timeBonus + attemptBonus + streakBonus;
+
+        return Math.Max(1, (int)Math.Round(rawPoints * settings.ScoreMultiplier));
     }
 
     private void UnsuccessfulAttempt(string input)
     {
         attempts++;
         failedAttempts.Add(input);
-        score = Math.Max(0, score - 1);
+        score = Math.Max(0, score - 2);
 
         if (attempts >= MaxAttemptsPerWord)
         {
-            string missedWord = currentWord;
-            countdownTimer.Stop();
-            wordList.Remove(missedWord);
-            streak = 0;
-            GenerateNewWord();
-            labelStatus.Text = $"New word generated. The missed word was '{missedWord}'.";
+            LoseLife($"Too many attempts. The word was '{currentWord}'.");
             return;
         }
 
-        labelStatus.Text = $"Try again. You have {MaxAttemptsPerWord - attempts} attempts left for this word.";
+        labelStatus.Text = $"Not it. {MaxAttemptsPerWord - attempts} attempts left for this word.";
+    }
+
+    private void LoseLife(string reason)
+    {
+        countdownTimer.Stop();
+
+        string missedWord = currentWord;
+        lives--;
+        streak = 0;
+        remainingWords.Remove(missedWord);
+        UpdateHighScore();
+
+        if (lives <= 0)
+        {
+            EndGame($"{reason} No lives left. Final score: {score}.", false);
+            return;
+        }
+
+        GenerateNewWord();
+        labelStatus.Text = $"{reason} Lives left: {lives}.";
+    }
+
+    private void EndGame(string message, bool won)
+    {
+        countdownTimer.Stop();
+        currentWord = string.Empty;
+        secondsLeft = 0;
+        UpdateHighScore();
+        SetGameControlsEnabled(false);
+        labelScrambledWord.Text = won ? "CLEARED" : "GAME OVER";
+        labelStatus.Text = message;
+        UpdateLabels();
     }
 
     private void UpdateLabels()
@@ -190,10 +288,18 @@ public partial class IndexForm : Form
         labelAttemptsCount.Text = attempts.ToString();
         labelGuessedCount.Text = guessedWords.ToString();
         labelScoreCount.Text = score.ToString();
+        labelStreakCount.Text = streak.ToString();
+        labelLivesCount.Text = lives.ToString();
+        labelHighScoreCount.Text = highScore.ToString();
+        labelWordsLeftCount.Text = remainingWords.Count.ToString();
         UpdateTimerLabel();
         textBoxFailedAttempts.Text = string.Join(Environment.NewLine, failedAttempts);
         textBoxInput.Clear();
-        textBoxInput.Focus();
+
+        if (textBoxInput.Enabled)
+        {
+            textBoxInput.Focus();
+        }
     }
 
     private void ButtonSkipClick(object sender, EventArgs e)
@@ -205,11 +311,12 @@ public partial class IndexForm : Form
 
         string skippedWord = currentWord;
         countdownTimer.Stop();
-        score = Math.Max(0, score - 2);
-        wordList.Remove(skippedWord);
+        score = Math.Max(0, score - 8);
         streak = 0;
+        remainingWords.Remove(skippedWord);
+        UpdateHighScore();
         GenerateNewWord();
-        labelStatus.Text = $"Skipped. The word was '{skippedWord}'.";
+        labelStatus.Text = $"Skipped '{skippedWord}'. -8 points and streak reset.";
         UpdateLabels();
     }
 
@@ -220,26 +327,77 @@ public partial class IndexForm : Form
             return;
         }
 
-        if (hintUsed)
+        if (revealedIndexes.Count >= currentWord.Length)
         {
-            labelStatus.Text = "Hint already used for this word.";
+            labelStatus.Text = $"Full reveal: {currentWord}";
             textBoxInput.Focus();
             return;
         }
 
-        hintUsed = true;
-        score = Math.Max(0, score - 3);
-        labelScoreCount.Text = score.ToString();
+        int indexToReveal = GetNextHintIndex();
+        revealedIndexes.Add(indexToReveal);
+        hintsUsedForWord++;
 
-        if (currentWord.Length <= 2)
+        int penalty = 5 + hintsUsedForWord * 2;
+        score = Math.Max(0, score - penalty);
+        streak = 0;
+        labelStatus.Text = $"Hint: {BuildHintPattern()} (-{penalty} points)";
+        UpdateLabels();
+    }
+
+    private int GetNextHintIndex()
+    {
+        if (!revealedIndexes.Contains(0))
         {
-            labelStatus.Text = $"Hint: the word is '{currentWord}'.";
+            return 0;
+        }
+
+        if (!revealedIndexes.Contains(currentWord.Length - 1))
+        {
+            return currentWord.Length - 1;
+        }
+
+        List<int> hiddenIndexes = [];
+
+        for (int i = 0; i < currentWord.Length; i++)
+        {
+            if (!revealedIndexes.Contains(i))
+            {
+                hiddenIndexes.Add(i);
+            }
+        }
+
+        return hiddenIndexes[random.Next(hiddenIndexes.Count)];
+    }
+
+    private string BuildHintPattern()
+    {
+        char[] pattern = new char[currentWord.Length];
+
+        for (int i = 0; i < currentWord.Length; i++)
+        {
+            pattern[i] = revealedIndexes.Contains(i) ? currentWord[i] : '_';
+        }
+
+        return string.Join(" ", pattern);
+    }
+
+    private void ButtonReshuffleClick(object sender, EventArgs e)
+    {
+        if (string.IsNullOrEmpty(currentWord))
+        {
             return;
         }
 
-        string middle = new('_', currentWord.Length - 2);
-        labelStatus.Text = $"Hint: {currentWord[0]}{middle}{currentWord[^1]}";
-        textBoxInput.Focus();
+        labelScrambledWord.Text = ScrambleWord(currentWord);
+        score = Math.Max(0, score - 1);
+        labelStatus.Text = "Fresh scramble generated. -1 point.";
+        UpdateLabels();
+    }
+
+    private void ButtonNewGameClick(object sender, EventArgs e)
+    {
+        StartNewGame();
     }
 
     private void TextBoxInputKeyDown(object sender, KeyEventArgs e)
@@ -270,21 +428,68 @@ public partial class IndexForm : Form
 
     private void TimeExpired()
     {
-        countdownTimer.Stop();
-
-        string expiredWord = currentWord;
         failedAttempts.Add("time expired");
-        score = Math.Max(0, score - 2);
-        wordList.Remove(expiredWord);
-        streak = 0;
-        GenerateNewWord();
-        labelStatus.Text = $"Time's up! The word was '{expiredWord}'.";
+        LoseLife($"Time's up. The word was '{currentWord}'.");
         UpdateLabels();
     }
 
     private void UpdateTimerLabel()
     {
         labelTimerCount.Text = $"{secondsLeft}s";
-        labelTimerCount.ForeColor = secondsLeft <= 5 ? Color.Firebrick : Color.FromArgb(31, 78, 121);
+        labelTimerCount.ForeColor = secondsLeft <= 5 ? Color.Firebrick : Color.FromArgb(0, 122, 255);
+
+        if (secondsLeft >= 0 && secondsLeft <= progressBarTimer.Maximum)
+        {
+            progressBarTimer.Value = secondsLeft;
+        }
     }
+
+    private void SetGameControlsEnabled(bool enabled)
+    {
+        textBoxInput.Enabled = enabled;
+        buttonCheck.Enabled = enabled;
+        buttonSkip.Enabled = enabled;
+        buttonHint.Enabled = enabled;
+        buttonReshuffle.Enabled = enabled;
+    }
+
+    private void LoadHighScore()
+    {
+        highScore = 0;
+
+        try
+        {
+            if (File.Exists(HighScoreFilePath)
+                && int.TryParse(File.ReadAllText(HighScoreFilePath), out int savedHighScore))
+            {
+                highScore = savedHighScore;
+            }
+        }
+        catch
+        {
+            highScore = 0;
+        }
+    }
+
+    private void UpdateHighScore()
+    {
+        if (score <= highScore)
+        {
+            return;
+        }
+
+        highScore = score;
+        labelHighScoreCount.Text = highScore.ToString();
+
+        try
+        {
+            File.WriteAllText(HighScoreFilePath, highScore.ToString());
+        }
+        catch
+        {
+            labelStatus.Text = "High score updated, but it could not be saved to disk.";
+        }
+    }
+
+    private sealed record DifficultySettings(int SecondsPerRound, int StartingLives, double ScoreMultiplier);
 }

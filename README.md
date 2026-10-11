@@ -1,6 +1,6 @@
-# Word Scramble X
+# Word Scramble 
 
-Word Scramble X is a C# Windows Forms arcade word game where the player unscrambles random words under pressure.
+Word Scramble is a C# Windows Forms arcade word game where the player unscrambles random words under pressure.
 
 ## Project Goals
 
